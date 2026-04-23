@@ -1,0 +1,15 @@
+# PyScale 의존성
+
+# 필수
+numpy>=1.24.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+psutil>=5.9.0
+
+# 선택 (GPU 가속)
+# torch>=2.0.0
+# torchvision>=0.15.0
+# realesrgan>=0.3.0
+
+# 선택 (화면 캡처)
+# mss>=9.0.0
