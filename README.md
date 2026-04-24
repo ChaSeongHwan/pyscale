@@ -1,4 +1,4 @@
-# ⬆ PyScale - AI 이미지 업스케일러
+# ⬆ PyScale - AI 업스케일러
 
 ![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
