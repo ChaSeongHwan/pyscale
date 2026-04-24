@@ -1,7 +1,8 @@
 """
 src/algorithms/hybrid.py - 하이브리드 알고리즘 (3가지)
 
-IntelligentHybrid, MultiScaleUpscaler, AdaptiveResourceUpscaler
+SmartHybrid, MultiStage, MemoryAware
+실시간 처리에 최적화됨
 """
 
 import cv2
@@ -14,113 +15,114 @@ from .advanced import FSR, NIS, xBR
 logger = logging.getLogger(__name__)
 
 
-class ImageAnalyzer:
-    """이미지 특성 분석"""
+class SmartHybrid(BaseUpscaler):
+    """
+    스마트 하이브리드 - 프레임 특성에 따라 자동 선택
     
-    @staticmethod
-    def analyze(image: np.ndarray) -> dict:
-        """
-        이미지 분석
-        
-        Returns:
-            dict: edge_strength, texture_complexity, color_diversity, noise_level
-        """
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # 엣지 강도
-        sobelx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
-        sobely = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-        edge = np.mean(np.sqrt(sobelx**2 + sobely**2)) / 255.0
-        
-        # 텍스처
-        low_freq = cv2.GaussianBlur(gray, (5, 5), 1.0)
-        high_freq = gray.astype(np.float32) - low_freq.astype(np.float32)
-        texture = np.std(high_freq) / 255.0
-        
-        return {
-            'edge_strength': float(np.clip(edge, 0, 1)),
-            'texture': float(np.clip(texture, 0, 1)),
-        }
+    실시간 처리용으로 가벼운 분석
+    """
     
-    @staticmethod
-    def recommend_algorithm(edge: float, texture: float) -> str:
-        """알고리즘 추천"""
-        if edge > 0.6 or texture > 0.5:
-            return "lanczos"
-        elif edge > 0.3:
-            return "fsr"
-        else:
-            return "bicubic"
-
-
-class IntelligentHybrid(BaseUpscaler):
-    """지능형 하이브리드 - 이미지 분석 후 최적 알고리즘 선택"""
-    
-    def __init__(self, sharpness: float = 0.3):
-        super().__init__("IntelligentHybrid", False)
-        self.sharpness = sharpness
+    def __init__(self, scale: float = 2.0):
+        super().__init__("SmartHybrid", scale)
         self.algorithms = {
-            'lanczos': Lanczos(),
-            'fsr': FSR(sharpness),
-            'nis': NIS(sharpness),
-            'bicubic': Bicubic(),
+            'bilinear': Bilinear(scale),
+            'bicubic': Bicubic(scale),
+            'fsr': FSR(scale),
+            'lanczos': Lanczos(scale),
         }
+        self.selected_algo = 'bicubic'
     
-    def upscale(self, image: np.ndarray, scale_factor: float, **kwargs) -> np.ndarray:
-        """자동 분석 후 업스케일"""
-        # 분석
-        analysis = ImageAnalyzer.analyze(image)
-        algo_name = ImageAnalyzer.recommend_algorithm(
-            analysis['edge_strength'], analysis['texture']
-        )
+    def _detect_frame_type(self, frame: np.ndarray) -> str:
+        """프레임 타입 감지 (빠른 버전)"""
+        # 작은 크기로 분석 (속도 개선)
+        small = cv2.resize(frame, (160, 120))
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         
-        logger.info(f"선택: {algo_name}")
+        # 엣지 감지
+        edges = cv2.Canny(gray, 100, 200)
+        edge_ratio = np.sum(edges > 0) / edges.size
         
-        # 업스케일
-        algo = self.algorithms[algo_name]
-        return algo.upscale(image, scale_factor)
+        # 엣지 비율에 따라 알고리즘 선택
+        if edge_ratio > 0.2:
+            return 'fsr'  # 게임/고에너지 콘텐츠
+        elif edge_ratio > 0.1:
+            return 'bicubic'  # 균형
+        else:
+            return 'bilinear'  # 부드러운 콘텐츠
+    
+    def upscale(self, frame: np.ndarray) -> np.ndarray:
+        """스마트 업스케일링"""
+        # 매 N번마다만 재분석 (속도 개선)
+        self.frame_count = getattr(self, 'frame_count', 0) + 1
+        if self.frame_count % 30 == 0:  # 30프레임마다
+            self.selected_algo = self._detect_frame_type(frame)
+        
+        algo = self.algorithms[self.selected_algo]
+        return algo.upscale(frame)
 
 
-class MultiScaleUpscaler(BaseUpscaler):
-    """다중 단계 - 큰 배율을 2×2×2로 나눔"""
+class MultiStage(BaseUpscaler):
+    """
+    다중 단계 업스케일 - 큰 배율을 단계적으로
     
-    def __init__(self, sharpness: float = 0.3):
-        super().__init__("MultiScale", False)
-        self.upscaler = Lanczos()
-        self.sharpness = sharpness
+    4× = 2×2, 8× = 2×2×2
+    """
     
-    def upscale(self, image: np.ndarray, scale_factor: float, **kwargs) -> np.ndarray:
-        """단계적 업스케일"""
-        result = image.copy()
-        remaining = scale_factor
+    def __init__(self, scale: float = 2.0):
+        super().__init__("MultiStage", scale)
+        self.base_algo = Bicubic(2.0)
+    
+    def upscale(self, frame: np.ndarray) -> np.ndarray:
+        """단계적 업스케일링"""
+        result = frame.copy()
+        remaining = self.scale
         
+        # 2×씩 반복
         while remaining > 1.0:
             current_scale = min(2.0, remaining)
-            result = self.upscaler.upscale(result, current_scale)
+            self.base_algo.scale = current_scale
+            result = self.base_algo.upscale(result)
             remaining /= current_scale
-            logger.debug(f"단계: ×{current_scale}")
         
         return result
 
 
-class AdaptiveResourceUpscaler(BaseUpscaler):
-    """적응형 - 메모리 제약 기반 조정"""
+class MemoryAware(BaseUpscaler):
+    """
+    메모리 인식 업스케일 - 사용 가능 메모리에 따라 조정
+    """
     
-    def __init__(self, max_memory_mb: int = 2048):
-        super().__init__("AdaptiveResource", False)
+    def __init__(self, scale: float = 2.0, max_memory_mb: int = 2048):
+        super().__init__("MemoryAware", scale)
         self.max_memory_mb = max_memory_mb
+        self.use_fast = False
     
-    def upscale(self, image: np.ndarray, scale_factor: float, **kwargs) -> np.ndarray:
-        """메모리 검사 후 업스케일"""
-        h, w = image.shape[:2]
-        required_mb = w * h * scale_factor * scale_factor * 12 / (1024 * 1024)
+    def upscale(self, frame: np.ndarray) -> np.ndarray:
+        """메모리 기반 업스케일링"""
+        h, w = frame.shape[:2]
+        required_mb = w * h * self.scale * self.scale * 12 / (1024 * 1024)
         
-        if required_mb < self.max_memory_mb:
-            # 직접 처리
-            algo = Lanczos()
+        if required_mb > self.max_memory_mb:
+            # 메모리 부족: 빠른 알고리즘 사용
+            algo = Bilinear(self.scale)
         else:
-            # 타일 처리 또는 저급 알고리즘
-            algo = Bilinear()
-            logger.warning("메모리 제약: 저급 알고리즘 사용")
+            # 메모리 충분: 고품질 알고리즘 사용
+            algo = Lanczos(self.scale)
         
-        return algo.upscale(image, scale_factor)
+        return algo.upscale(frame)
+
+
+class FastHybrid(BaseUpscaler):
+    """
+    고속 하이브리드 - 실시간 60FPS+ 목표
+    
+    최소한의 오버헤드로 최고 속도
+    """
+    
+    def __init__(self, scale: float = 2.0):
+        super().__init__("FastHybrid", scale)
+        self.algo = Bilinear(scale)
+    
+    def upscale(self, frame: np.ndarray) -> np.ndarray:
+        """고속 업스케일링"""
+        return self.algo.upscale(frame)
