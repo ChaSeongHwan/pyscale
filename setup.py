@@ -12,7 +12,7 @@ setup(
     description="AI Image Upscaler with Advanced Resource Management",
     long_description=readme,
     long_description_content_type="text/markdown",
-    url="https://github.com/YOUR_USERNAME/pyscale",
+    url="https://github.com/ChaSeongHwan/pyscale",
     
     packages=find_packages(),
     python_requires=">=3.9",
@@ -22,6 +22,7 @@ setup(
         "opencv-python>=4.8.0",
         "Pillow>=10.0.0",
         "psutil>=5.9.0",
+	"mss>=9.0.0",
     ],
     
     extras_require={
